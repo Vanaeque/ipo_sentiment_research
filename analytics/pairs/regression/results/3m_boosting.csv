@@ -1,0 +1,9 @@
+,MAPE,Spearman,Pearson,Kendall
+baseline_train,0.1109,0.7916,0.7684,0.6288
+baseline_test,0.1189,0.7276,0.7069,0.5685
+after_nonsense_drop_train,0.1105,0.7926,0.77,0.6288
+after_nonsense_drop_test,0.1181,0.7332,0.7108,0.5685
+after_correlation_drop_train,0.1117,0.7831,0.7626,0.6288
+after_correlation_drop_test,0.1188,0.7253,0.7068,0.5685
+model_train,0.1102,0.7865,0.766,0.6288
+model_test,0.1171,0.7337,0.7121,0.5685

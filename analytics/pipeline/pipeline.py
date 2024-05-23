@@ -1,6 +1,9 @@
 import numpy as np
 from scipy.stats import spearmanr, pearsonr, kendalltau
 import pandas as pd
+from sklearn.metrics import roc_auc_score, log_loss
+from sklearn.linear_model import LinearRegression
+from scipy.stats.distributions import chi2
 
 def smart_log(X):
     return np.sign(X)*np.log(np.abs(X) + 1)
@@ -43,15 +46,50 @@ def corr_drop(X, y, cutoff = 0.5):
         fl = False
         for i in range(len(cols)):
             for j in range(i+1, len(cols)):
-                col1=cols[i]
-                col2=cols[j]
-                r2 = abs(spearmanr(X[col1], X[col2])[0])
+                coli=cols[i]
+                colj=cols[j]
+                r2 = abs(pearsonr(X[coli], X[colj])[0])
                 if r2 > cutoff:
                     fl = True
-                    if spearmanr(X[cols[i]], y)[0] > spearmanr(X[cols[j]], y)[0]:
+                    r2_i = abs(pearsonr(X[coli], y)[0])
+                    r2_j = abs(pearsonr(X[colj], y)[0])
+                    if r2_i > r2_j:
+                        cols.remove(cols[j])
+                        print(f'{colj} ({round(r2_j, 4)}) was removed by {coli} ({round(r2_i, 4)})')
+                    else:
                         cols.remove(cols[i])
+                        print(f'{coli} ({round(r2_i, 4)}) was removed by {colj} ({round(r2_j, 4)})')
+                if fl:
+                    break
+            if fl:
+                break
+                
+    return cols
+
+def corr_drop_classification(X, y, cutoff = 0.5):
+    
+    fl = True
+    cols = list(X.columns)
+    
+    while fl:
+        fl = False
+        for i in range(len(cols)):
+            for j in range(i+1, len(cols)):
+                col1=cols[i]
+                col2=cols[j]
+                r2 = abs(pearsonr(X[col1], X[col2])[0])
+                if r2 > cutoff:
+                    fl = True
+                    auc_i = roc_auc_score(y, X[col1])
+                    auc_i = max(auc_i, 1 - auc_i)
+                    auc_j = roc_auc_score(y, X[col2])
+                    auc_j = max(auc_j, 1 - auc_j)
+                    if auc_i > auc_j:
+                        cols.remove(cols[i])
+                        print(f'{col2} ({round(auc_j, 3)}) was removed by {col1} ({round(auc_i, 3)})')
                     else:
                         cols.remove(cols[j])
+                        print(f'{col1} ({round(auc_i, 3)}) was removed by {col2} ({round(auc_j, 3)})')
                 if fl:
                     break
             if fl:
@@ -60,53 +98,38 @@ def corr_drop(X, y, cutoff = 0.5):
     return cols
 
 
-def linearization(X, y):
+zero_log = lambda x: np.log(x + 1)
+smart_log = lambda x: np.sign(x)*np.log(np.abs(x) + 1)
+smart_sqrt = lambda x: np.sign(x)*np.sqrt(np.abs(x))
+iteself = lambda x: x
 
-    funcs = [np.square, np.sqrt, np.log, smart_log, smart_sqrt]
-    
-    cols = X.columns
-    res_funcs = []
-    
-    for col in cols:
-        r2 = spearmanr(X[col], y)
-        best_func = None
-        for func in funcs:
-            try:
-                X_ = func(X[col])
-                r2_ = spearmanr(X_, y)
-                if r2_ > r2:
-                    r2 = r2_
-                    best_func = func
-                    
-            except Exception as e: 
-                print(e)
-        
-        res_funcs.append(func)
-                 
-    return res_funcs
+funcs = [np.log, np.square, np.sqrt, np.abs, zero_log, smart_log, smart_sqrt]
 
 
-def woe_line(X, y, n_buckets = 20, feature_name = 'feature', target_name = 'target', clip = True):
+def linearization(X, y, funcs=funcs):
     
-    """ Строит график зависимости WoE
-    x - параметр, от которого стоит искать зависимость
-    y - метки класса (0 / 1)
-    n_buckets - количество бинов для вещественного признака
-    feature_name, target_name - подписи к графику
-    """
+    best_func = iteself
+    best_r2 = pearsonr(X, y)[0]
     
-    import numpy as np
-    from sklearn.linear_model import LinearRegression
-    from sklearn.metrics import r2_score
-    import plotly.graph_objects as go
-    import plotly.express as px
-    from sklearn.metrics import roc_auc_score
+    for func in funcs:
+        try:
+            X_temp = func(X)
+            r2_temp = pearsonr(X_temp, y)[0]
+            if r2_temp > best_r2:
+                best_func = func
+                best_r2 = r2_temp
+        except:
+            pass
+    
+    return best_func, best_r2
+
+def linearization_binary(X, y, feature_name, target_name, funcs=funcs,  n_buckets = 100, cutoff = 0.1):
     
     def make_bucket(feature, n=100):
         '''функция, бьющая на бакеты(по умолчанию 100 точек)'''
         return df.assign(bucket = np.ceil(feature.rank(pct=True) * n))
     
-    def WoE (df_1, feature_name = 'feature', target_name = 'target'):
+    def WoE (df_1, feature_name = 'feature', target_name = target_name):
 
         a_1 = df_1[df_1 == 1].count()
         b_1 = df_1[df_1 == 0].count()
@@ -118,7 +141,96 @@ def woe_line(X, y, n_buckets = 20, feature_name = 'feature', target_name = 'targ
 
         return c
 
-    def p_diff(df_1, feature_name = 'feature', target_name = 'target'):
+    def p_diff(df_1, feature_name = 'feature', target_name = target_name):
+
+        a_1 = df_1[df_1 == 1].count()
+        b_1 = df_1[df_1 == 0].count()
+
+        a = df[df[target_name] == 1].count()[feature_name]
+        b = df[df[target_name] == 0].count()[feature_name]
+
+        c = a_1/a - b_1/b
+
+        return c
+    
+    def get_r2_by_buckets(df_buckets):
+        
+        if df_buckets[feature_name].isnull().sum() != 0:
+            return -1
+        else:
+            try:
+                df_info = df_buckets.groupby('bucket').agg(
+                        feature_value = pd.NamedAgg(column = feature_name, aggfunc='mean'),
+                        target_value =  pd.NamedAgg(column = target_name, aggfunc = lambda a : WoE(a, feature_name)),
+                        p_diff = pd.NamedAgg(column = target_name, aggfunc = lambda a : p_diff(a, feature_name)))
+
+                X = np.array(df_info['feature_value']).reshape(-1, 1)
+                y = np.array(df_info['target_value'])
+
+                model = LinearRegression()
+                model.fit(X = X, y = y)
+                r2 = pearsonr(df_info['target_value'], model.predict(np.array(df_info['feature_value']).reshape(-1,1)))[0]
+
+                return r2
+            except:
+                return -1
+    
+    df = pd.DataFrame({feature_name : X[feature_name], target_name : y})
+    df = df[df[feature_name].notna()]
+    df_buckets = make_bucket(df[feature_name], n_buckets)
+    
+    best_func = iteself
+    best_r2 = get_r2_by_buckets(df_buckets)
+    
+    for func in funcs:
+        try:
+            df = pd.DataFrame({feature_name : func(X[feature_name]), target_name : y})
+            df_buckets = make_bucket(df[feature_name], n_buckets)
+
+            r2_temp = get_r2_by_buckets(df_buckets)
+
+            if r2_temp - best_r2 > cutoff:
+                best_func = func
+                best_r2 = r2_temp
+        except:
+            pass
+    
+    return best_func, best_r2
+
+
+
+def woe_line(X, y, n_buckets = 20, feature_name = 'feature', target_name = 'target', clip = True, interactive = False):
+    
+    """ Строит график зависимости WoE
+    x - параметр, от которого стоит искать зависимость
+    y - метки класса (0 / 1)
+    n_buckets - количество бинов для вещественного признака
+    feature_name, target_name - подписи к графику
+    """
+    
+    import numpy as np
+    from sklearn.metrics import r2_score
+    import plotly.graph_objects as go
+    import plotly.express as px
+    from sklearn.metrics import roc_auc_score
+    
+    def make_bucket(feature, n=100):
+        '''функция, бьющая на бакеты(по умолчанию 100 точек)'''
+        return df.assign(bucket = np.ceil(feature.rank(pct=True) * n))
+    
+    def WoE (df_1, feature_name = 'feature', target_name = target_name):
+
+        a_1 = df_1[df_1 == 1].count()
+        b_1 = df_1[df_1 == 0].count()
+
+        a = df[df[target_name] == 1].count()[feature_name]
+        b = df[df[target_name] == 0].count()[feature_name]
+
+        c = np.log(a_1/b_1) - np.log(a/b)
+
+        return c
+
+    def p_diff(df_1, feature_name = 'feature', target_name = target_name):
 
         a_1 = df_1[df_1 == 1].count()
         b_1 = df_1[df_1 == 0].count()
@@ -168,6 +280,7 @@ def woe_line(X, y, n_buckets = 20, feature_name = 'feature', target_name = 'targ
     x_0 = np.round(- model.intercept_/model.coef_[0], 3)
     
     auc = np.round(roc_auc_score(df[target_name], df[feature_name]), 3)
+    auc = max(auc, 1-auc)
     
     iv = np.round((df_info['p_diff']*df_info['target_value']).sum(), 3)
     
@@ -187,7 +300,7 @@ def woe_line(X, y, n_buckets = 20, feature_name = 'feature', target_name = 'targ
         height = 500
             )
     
-    fig.show()
+    fig.show(config={'staticPlot': not interactive})
     
     if clip:
         hist = px.histogram(df_buckets[df_buckets[feature_name] <= np.percentile(df_buckets[feature_name], 95)].sort_values(by = 'bucket'), x=feature_name, color = 'bucket')
@@ -200,7 +313,7 @@ def woe_line(X, y, n_buckets = 20, feature_name = 'feature', target_name = 'targ
         legend_title_text = 'Bucket number',
         height = 500
             )
-    hist.show()
+    hist.show(config={'staticPlot': not interactive})
     
     
 def bucket_line(X, y, n_buckets = 20, feature_name = 'feature', target_name = 'target', clip = True, alpha = 0.05, interactive = False):
@@ -296,7 +409,7 @@ def bucket_line(X, y, n_buckets = 20, feature_name = 'feature', target_name = 't
                 )))
     
     fig.update_layout(
-        title_text = f' {feature_name} | R_sqr = {r2} | X_0 = {x_0}', # title of plot
+        title_text = f' {feature_name} | R_sqr = {r2} | X_0 = {x_0} (by buckets)', # title of plot
         xaxis_title_text = feature_name, # xaxis label
         yaxis_title_text = target_name, # yaxis label
         height = 500
@@ -340,7 +453,7 @@ def likelihood_ratio_test(ll_short, ll_long):
     lr = 2 * (ll_short - ll_long)
     return chi2.sf(lr, 1)
 
-def  stepwise_selection_classification(df, features, model,  target='d4p12', alpha_in=0.05, alpha_out = 0.10):
+def stepwise_selection_classification(df, features, model,  target='d4p12', alpha_in=0.05, alpha_out = 0.10):
     
     """
     Функция для отбора признаков при помощи прямого прохода 
@@ -498,4 +611,67 @@ def forward_selection_regression(df, features, model, target='target', alpha_in=
             print(f"В модель была добавлена переменная {best_feature}, p-value: {round(p_value, 4)}")
 
         p_value = 1
+    return selected_features
+
+def likelihood_ratio_test(ll_short, ll_long):
+    
+    lr = 2 * (ll_short - ll_long)
+    return chi2.sf(lr, 1)
+
+def forward_selection_classification(df, features, model, target, alpha_in=0.05):
+    
+    """
+    Функция для отбора признаков при помощи прямого прохода 
+    
+    Parameters
+    ----------
+    df : DataFrame
+        датафрейм с наблюдениями и целевой переменной
+    val_size : str
+        размер валидационной выборки
+    test_size : str
+        размер тестовой выборки
+    alpha_in : float in range [0, 1]
+        уровень значимости вхождения параметра в модель
+
+    Returns
+    ---
+    selected_features : list
+        список переменных отобранных на заданном уровне значимости alpha 
+    """
+
+
+    selected_features = list()
+    n = df.shape[0]
+    p_value = 1
+    while True:
+        fl_best = False
+        potential_features = list(set(features) - set(selected_features))
+        best_feature = ''
+        for feature in potential_features:
+            temp_features = [feature] + selected_features
+            model_short = model()
+            model_long = model()
+            if len(selected_features) == 0:
+                const = pd.Series([1]*df.shape[0])
+                model_short.fit(np.array(const).reshape(-1, 1), df[target])
+                ll_short = log_loss(df[target], model_short.predict_proba(np.array(const).reshape(-1, 1))[:, 1], normalize=False) 
+                model_long.fit(np.array(df[temp_features]).reshape(-1, 1), df[target])
+                ll_long = log_loss(df[target], model_long.predict_proba(np.array(df[temp_features]).reshape(-1, 1))[:, 1], normalize=False)
+            else:
+                model_short.fit(df[selected_features], df[target])
+                ll_short = log_loss(df[target], model_short.predict_proba(df[selected_features])[:, 1], normalize=False)
+                model_long.fit(df[temp_features], df[target])
+                ll_long = log_loss(df[target], model_long.predict_proba(df[temp_features])[:, 1], normalize=False)
+            if likelihood_ratio_test(ll_short, ll_long) < alpha_in and likelihood_ratio_test(ll_short, ll_long) < p_value:
+                p_value = likelihood_ratio_test(ll_short, ll_long)
+                best_feature = feature
+        if best_feature == '':
+            break
+        else:
+            selected_features.append(best_feature)
+            print(f"В модель была добавлена переменная {best_feature}, p-value: {round(p_value, 4)}")
+        
+        p_value = 1
+        
     return selected_features

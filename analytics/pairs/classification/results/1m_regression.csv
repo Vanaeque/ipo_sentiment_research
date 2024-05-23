@@ -1,0 +1,13 @@
+,Accuracy,roc_auc_score,f1_score
+baseline_train,0.667,0.6564,0.7428
+baseline_test,0.6668,0.657,0.7445
+after_nonsense_drop_train,0.6615,0.6573,0.7357
+after_nonsense_drop_test,0.658,0.6585,0.7351
+after_soft_correlation_drop_train,0.6664,0.6564,0.7419
+after_soft_correlation_drop_test,0.6665,0.6577,0.7438
+after_auc_drop_train,0.7233,0.6432,0.7961
+after_auc_drop_test,0.7258,0.6407,0.799
+after_linearization_train,0.7201,0.6747,0.7938
+after_linearization_test,0.7233,0.6714,0.7973
+model_train,0.7203,0.6741,0.7938
+model_test,0.7233,0.6707,0.7973
